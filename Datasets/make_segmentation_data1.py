@@ -36,7 +36,7 @@ dicomsdl._dicomsdl.DataSet.to_numpy_image = __dataset__to_numpy_image
 #UTILS
 
 def glob_sorted(path):
-    return sorted(glob(path), key=lambda x: int(x.split('/')[-1].split('.')[0]))
+    return sorted(glob(path), key=lambda x: int(x.replace('\\', '/').split('/')[-1].split('.')[0]))
 
 def get_standardized_pixel_array(dcm):
     # Correct DICOM pixel_array if PixelRepresentation == 1.
@@ -128,46 +128,48 @@ jump = 16
 seq = 32
 sz = 128
 
-for i, row in tqdm(seg_study_level.iterrows()):
-    patient = row.patient_id
-    studies = row.seg_studies
+# for i, row in tqdm(seg_study_level.iterrows()):
+#     patient = row.patient_id
+#     studies = row.seg_studies
 
-    for study in studies:
+#     for study in studies:
     
-        dcms = glob_sorted(f"{PATHS.BASE_PATH}/train_images/{patient}/{study}/*.dcm")
+#         dcms = glob_sorted(f"{PATHS.BASE_PATH}/train_images/{patient}/{study}/*.dcm")
             
-        segmentation_path = f'{PATHS.BASE_PATH}/segmentations/{study}.nii'
+#         segmentation_path = f'{PATHS.BASE_PATH}/segmentations/{study}.nii'
         
-        volume = load_volume(dcms)
-        seg_volume = load_segmentation_volume(segmentation_path)
+#         # CT画像が入っている.dcmファイルからピクセルを読み込んでstackする
+#         volume = load_volume(dcms)
+#         # .niiファイルからSegmentationデータを読み込んでstackする
+#         seg_volume = load_segmentation_volume(segmentation_path)
         
-        seg_volume = seg_volume.astype(np.uint8)
+#         seg_volume = seg_volume.astype(np.uint8)
             
-        volume = volume[np.arange(0, volume.shape[0], 2)]
+#         volume = volume[np.arange(0, volume.shape[0], 2)]
 
-        volume = np.stack([cv2.resize(x, (sz, sz)) for x in volume])
+#         volume = np.stack([cv2.resize(x, (sz, sz)) for x in volume])
 
-        seg_volume = seg_volume[np.arange(0, seg_volume.shape[0], 2)].copy()
+#         seg_volume = seg_volume[np.arange(0, seg_volume.shape[0], 2)].copy()
 
-        seg_volume = np.stack([cv2.resize(x, (sz, sz), interpolation=cv2.INTER_NEAREST_EXACT) for x in seg_volume])
+#         seg_volume = np.stack([cv2.resize(x, (sz, sz), interpolation=cv2.INTER_NEAREST_EXACT) for x in seg_volume])
         
-        volumes, seg_volumes = [], []
-        cuts = [(x, x+seq) for x in np.arange(0, volume.shape[0], jump)[:-2]]
+#         volumes, seg_volumes = [], []
+#         cuts = [(x, x+seq) for x in np.arange(0, volume.shape[0], jump)[:-2]]
         
-        if cuts:
-            for cut in cuts:
-                volumes.append(volume[cut[0]:cut[1]])
-                seg_volumes.append(seg_volume[cut[0]:cut[1]])
+#         if cuts:
+#             for cut in cuts:
+#                 volumes.append(volume[cut[0]:cut[1]])
+#                 seg_volumes.append(seg_volume[cut[0]:cut[1]])
 
-            volumes, seg_volumes = np.stack(volumes), np.stack(seg_volumes)
-        else:
-            volumes, seg_volumes = np.zeros((1, seq, sz, sz), dtype=np.uint8), np.zeros((1, seq, sz, sz), dtype=np.uint8)
-            volumes[0, :len(volume)] = volume
-            seg_volumes[0, :len(seg_volume)] = seg_volume
+#             volumes, seg_volumes = np.stack(volumes), np.stack(seg_volumes)
+#         else:
+#             volumes, seg_volumes = np.zeros((1, seq, sz, sz), dtype=np.uint8), np.zeros((1, seq, sz, sz), dtype=np.uint8)
+#             volumes[0, :len(volume)] = volume
+#             seg_volumes[0, :len(seg_volume)] = seg_volume
         
-        for v in range(len(volumes)):
-            np.save(f"{SAVE_FOLDER}/{patient}_{study}_vol{v}.npy", volumes[v])
-            np.save(f"{SAVE_FOLDER}/{patient}_{study}_vol{v}_mask.npy", seg_volumes[v])
+#         for v in range(len(volumes)):
+#             np.save(f"{SAVE_FOLDER}/{patient}_{study}_vol{v}.npy", volumes[v])
+#             np.save(f"{SAVE_FOLDER}/{patient}_{study}_vol{v}_mask.npy", seg_volumes[v])
     
     #break
 
@@ -215,6 +217,8 @@ def load_total_segmentation_volume(path):
 
 print("MAKING TOTAL-SEGMENTOR DATA")
 
+# TOTAL_SEGMENTOR_FOLDER = f'./TotalSegmentor/Totalsegmentator_dataset'
+os.makedirs(PATHS.TOTAL_SEGMENTOR_FOLDER, exist_ok=True)
 meta = pd.read_csv(f'{PATHS.TOTAL_SEGMENTOR_FOLDER}/meta.csv', delimiter=';')
 meta['abdomen'] = meta.study_type.apply(lambda x: 1 if 'abdomen' in x else 0)
 meta = meta[meta['abdomen']==1].reset_index(drop=True)
