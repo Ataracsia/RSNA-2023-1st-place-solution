@@ -9,6 +9,7 @@ import sys
 sys.path.append('./Configs/')
 from segmentation_config import CFG
 
+# SegmentationにはEncoderにResnet、DecoderにUnetを用いたモデルを使う
 class Model(nn.Module):
     def __init__(self, backbone=None, segtype='unet', pretrained=False):
         super(Model, self).__init__()

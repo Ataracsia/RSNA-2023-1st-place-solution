@@ -128,6 +128,7 @@ jump = 16
 seq = 32
 sz = 128
 
+# ↓は完了したのでコメントアウトする
 # for i, row in tqdm(seg_study_level.iterrows()):
 #     patient = row.patient_id
 #     studies = row.seg_studies
@@ -171,12 +172,7 @@ sz = 128
 #             np.save(f"{SAVE_FOLDER}/{patient}_{study}_vol{v}.npy", volumes[v])
 #             np.save(f"{SAVE_FOLDER}/{patient}_{study}_vol{v}_mask.npy", seg_volumes[v])
     
-    #break
-
-
-
-
-
+    # break
 
 
 #UTILS
@@ -214,10 +210,11 @@ def load_total_segmentation_volume(path):
     
     return volume
 
-
 print("MAKING TOTAL-SEGMENTOR DATA")
 
 # TOTAL_SEGMENTOR_FOLDER = f'./TotalSegmentor/Totalsegmentator_dataset'
+# Totalsegmentator_dataset/meta.csvは、https://zenodo.org/records/6802614 にある
+# データセットのメタデータのことと思われる
 os.makedirs(PATHS.TOTAL_SEGMENTOR_FOLDER, exist_ok=True)
 meta = pd.read_csv(f'{PATHS.TOTAL_SEGMENTOR_FOLDER}/meta.csv', delimiter=';')
 meta['abdomen'] = meta.study_type.apply(lambda x: 1 if 'abdomen' in x else 0)
@@ -231,7 +228,9 @@ seq = 32
 sz = 128
 
 for study in tqdm(meta.image_id):
+    
     try:
+        
         volume = load_total_volume(f'{PATHS.TOTAL_SEGMENTOR_FOLDER}/{study}/ct.nii.gz')
         seg_volume_1 = load_total_segmentation_volume(f'{PATHS.TOTAL_SEGMENTOR_FOLDER}/{study}/segmentations/liver.nii.gz')
         seg_volume_2 = load_total_segmentation_volume(f'{PATHS.TOTAL_SEGMENTOR_FOLDER}/{study}/segmentations/spleen.nii.gz')
@@ -240,7 +239,9 @@ for study in tqdm(meta.image_id):
         seg_volume_5_1 = load_total_segmentation_volume(f'{PATHS.TOTAL_SEGMENTOR_FOLDER}/{study}/segmentations/colon.nii.gz')
         seg_volume_5_2 = load_total_segmentation_volume(f'{PATHS.TOTAL_SEGMENTOR_FOLDER}/{study}/segmentations/duodenum.nii.gz')
         seg_volume_5_3 = load_total_segmentation_volume(f'{PATHS.TOTAL_SEGMENTOR_FOLDER}/{study}/segmentations/small_bowel.nii.gz')
+    
     except:
+    
         continue
     
     seg_volume_5 = np.clip(seg_volume_5_1+seg_volume_5_2+seg_volume_5_3, 0, 1)
