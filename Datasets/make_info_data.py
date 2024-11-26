@@ -219,7 +219,7 @@ for patient in tqdm(data.patient_id):
     for study in studies:
         dcms = glob_sorted(f'{PATHS.BASE_PATH}/train_images/{patient}/{study}/*.dcm')
         
-        # ExtravasationもしくはBowelに該当するinstance_numberをリスト化
+        # ExtravasationもしくはBowelを表すinstance_numberをリスト化
         extravasation_instances = image_level_extravasation[image_level_extravasation.series_id==int(study)].instance_number.values
         bowel_instances = image_level_bowel[image_level_bowel.series_id==int(study)].instance_number.values
         
@@ -284,7 +284,6 @@ for gri, grd in tqdm(FINAL_DAT.groupby('study')):
     st = grd.study.values[0]
     FINAL_DAT[FINAL_DAT.study==st] = grd
 
-
 study_level = pd.read_csv(f'{PATHS.BASE_PATH}/train.csv')
 
 # 各patientのany_injuryラベルの値を辞書で取得する
@@ -308,48 +307,48 @@ for col in cols:
 
 data['any_injury'] = data.patient.apply(lambda x: patient_to_injury[x])
 
-# 
+# dataに、organs_sizeを追加する
 cols = ['liver_size', 'right_kidney_size', 'left_kidney_size', 'spleen_size']
 
+# 欠損値に0埋めを行う
 for col in cols:
     data[col] = data[col].fillna(0)
+
 
 study_boxes = {}
 for gri, grd in tqdm(data.groupby('study')):
     
+    # 欠損値に0埋め
     grd = grd.fillna('')
     
+    # Run Length Decodingを行い、StudyレベルのSegmentationデータに対し、
+    # 0より大なる値がある箇所に、その最大値をマッピングする
     add_rles = []
     cols = ['liver_rle', 'right_kidney_rle', 'left_kidney_rle', 'spleen_rle', 'bowel_rle']
     for col in cols:
         rle = np.stack([rle_decode(rle, (128, 128)) for rle in grd[col]]).max(0)
         add_rles.append(rle)
     msk = np.stack(add_rles).max(0)
+    # 0より大なる値がある箇所に1でマッピングし、その箇所の位置を記録する
+    # 位置は高さと幅の最大値を1とした割合で得られる
     ys, xs = np.where(msk)
     y1, y2, x1, x2 = np.min(ys) / 128, np.max(ys) / 128, np.min(xs) / 128, np.max(xs) / 128
     
-    # studyごとに、内臓の位置から最低限必要な画像の大きさと位置を決めている
     study_boxes[gri] = [y1, y2, x1, x2]
-    
-    #break
-    
-# data = data[data.any_injury==1]
 
+# Studyごとの位置を属性として追加
 data['study_crop'] = data.study.apply(lambda x: study_boxes[x])
 
-
+# 
 dicom_tags = pd.read_parquet(f'{PATHS.BASE_PATH}/train_dicom_tags.parquet')
 
+# parquetファイルにあるInstanceレベルのメタデータにあるImagePositionPatientから
+# z軸の座標を得る
 z_pos = {row.path: float(row.ImagePositionPatient.split(',')[-1].replace(']', '')) for i, row in tqdm(dicom_tags.iterrows())}
 
+# "train_images/patient/study/instance.dcm"の形で.dcmのパスをdataに追加
 data['patient_study_instance'] = 'train_images/' + data['patient'].astype(str) + '/' + data['study'].astype(str) + '/' + data['instance'].astype(str) +  '.dcm'
+# z_posをdataに追加
 data['z_pos'] = data.patient_study_instance.apply(lambda x: z_pos[x])
 
-
-dicom_tags
-
-
 data.to_csv(f'{PATHS.INFO_DATA_SAVE}', index=False)
-
-
-
