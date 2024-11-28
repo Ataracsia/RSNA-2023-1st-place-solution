@@ -33,12 +33,13 @@ def __dataset__to_numpy_image(self, index=0):
 dicomsdl._dicomsdl.DataSet.to_numpy_image = __dataset__to_numpy_image
 
 
-#UTILS
+# Utilities
 
 def glob_sorted(path):
     return sorted(glob(path), key=lambda x: int(x.replace('\\', '/').split('/')[-1].split('.')[0]))
 
 def get_standardized_pixel_array(dcm):
+    
     # Correct DICOM pixel_array if PixelRepresentation == 1.
     pixel_array = dcm.to_numpy_image()
     if dcm.PixelRepresentation == 1:
@@ -104,23 +105,29 @@ def load_total_segmentation_volume(path):
     
     return volume
 
-print(PATHS.BASE_PATH, PATHS.OUTPUT_BASE)
-
+# SegmentationデータのStemを取得する
+# BASE_PATHは"../RSNA-Abdominal-Trauma-Detection/competition_data"に設定してある
 seg_studies = [x.split('.')[0] for x in os.listdir(PATHS.BASE_PATH + '/segmentations/')]
 
+# Patientレベルの健康状態情報を取得
 study_level = pd.read_csv(f'{PATHS.BASE_PATH}/train.csv')
 
+# .dcmファイルのあるPatientとStudyの組み合わせを辞書にして取得する
 patient_to_studies = {}
 for pat in study_level.patient_id:
     patient_to_studies[pat] = os.listdir(f"{PATHS.BASE_PATH}/train_images/{pat}/")
-    
-study_level['seg_study'] = study_level.patient_id.apply(lambda x: max([1 if y in seg_studies else 0 for y in patient_to_studies[x]]))
-study_level['seg_studies'] = study_level.patient_id.apply(lambda x: [y for y in patient_to_studies[x]])
 
+# train.csvに存在するpatient_idのうち、segmentationsに存在するStudyに1を、その他に
+# 0を持つ属性を追加
+study_level['seg_study'] = study_level.patient_id.apply(lambda x: max([1 if y in seg_studies else 0 for y in patient_to_studies[x]]))
+# train.csvに存在するpatient_idのうち、.dcmファイルが存在する各Studyをリストで取得
+study_level['seg_studies'] = study_level.patient_id.apply(lambda x: [y for y in patient_to_studies[x]])
+# train.csvに存在するpatient_idのうち、segmentationsデータを持っているStudyを取得
 seg_study_level = study_level[study_level['seg_study']==1]
 
 print("MAKING SEGMENTOR DATA")
 
+# = "./KAGGLE_SUBMISSION/segmentation_data_v1"
 SAVE_FOLDER = PATHS.SEGMENTOR_SAVE_FOLDER
 os.makedirs(SAVE_FOLDER, exist_ok=1)
 
@@ -128,54 +135,61 @@ jump = 16
 seq = 32
 sz = 128
 
-# ↓は完了したのでコメントアウトする
-# for i, row in tqdm(seg_study_level.iterrows()):
-#     patient = row.patient_id
-#     studies = row.seg_studies
+# ↓は完了したのでコメントアウトしてもよい
+# 
+for i, row in tqdm(seg_study_level.iterrows()):
 
-#     for study in studies:
+    patient = row.patient_id
+    studies = row.seg_studies
+
+    for study in studies:
     
-#         dcms = glob_sorted(f"{PATHS.BASE_PATH}/train_images/{patient}/{study}/*.dcm")
+        # .dcmファイルのパスを取得し、並び替える
+        dcms = glob_sorted(f"{PATHS.BASE_PATH}/train_images/{patient}/{study}/*.dcm")
+        # Segmentationデータのパスを取得する
+        segmentation_path = f'{PATHS.BASE_PATH}/segmentations/{study}.nii'
+        
+        # CT画像が入っている.dcmファイル群からndarrayで読み込んで全てstackする
+        volume = load_volume(dcms)
+        # .niiファイルからSegmentationデータを読み込んでstackする
+        seg_volume = load_segmentation_volume(segmentation_path)
+        
+        seg_volume = seg_volume.astype(np.uint8)
             
-#         segmentation_path = f'{PATHS.BASE_PATH}/segmentations/{study}.nii'
+        # CTのndarrayを1つ飛ばしで取得する
+        volume = volume[np.arange(0, volume.shape[0], 2)]
+
+        # リサイズ
+        volume = np.stack([cv2.resize(x, (sz, sz)) for x in volume])
+
+        # Segmentationデータにも同じことを行う
+        seg_volume = seg_volume[np.arange(0, seg_volume.shape[0], 2)].copy()
+
+        seg_volume = np.stack([cv2.resize(x, (sz, sz), interpolation=cv2.INTER_NEAREST_EXACT) for x in seg_volume])
         
-#         # CT画像が入っている.dcmファイルからピクセルを読み込んでstackする
-#         volume = load_volume(dcms)
-#         # .niiファイルからSegmentationデータを読み込んでstackする
-#         seg_volume = load_segmentation_volume(segmentation_path)
+        # volumeとseg_volumeを32枚組にするために(x, x+32)というタプルのリストを作る
+        # ただし、区切られたものはjumpの分だけ重複している
+        # また、seqがvolume.shape[0]を超過しないために[:-2]となっている
+        volumes, seg_volumes = [], []
+        cuts = [(x, x+seq) for x in np.arange(0, volume.shape[0], jump)[:-2]]
         
-#         seg_volume = seg_volume.astype(np.uint8)
-            
-#         volume = volume[np.arange(0, volume.shape[0], 2)]
+        if cuts:
+            for cut in cuts:
+                volumes.append(volume[cut[0]:cut[1]])
+                seg_volumes.append(seg_volume[cut[0]:cut[1]])
 
-#         volume = np.stack([cv2.resize(x, (sz, sz)) for x in volume])
-
-#         seg_volume = seg_volume[np.arange(0, seg_volume.shape[0], 2)].copy()
-
-#         seg_volume = np.stack([cv2.resize(x, (sz, sz), interpolation=cv2.INTER_NEAREST_EXACT) for x in seg_volume])
+            volumes, seg_volumes = np.stack(volumes), np.stack(seg_volumes)
+        else:
+            volumes, seg_volumes = np.zeros((1, seq, sz, sz), dtype=np.uint8), np.zeros((1, seq, sz, sz), dtype=np.uint8)
+            volumes[0, :len(volume)] = volume
+            seg_volumes[0, :len(seg_volume)] = seg_volume
         
-#         volumes, seg_volumes = [], []
-#         cuts = [(x, x+seq) for x in np.arange(0, volume.shape[0], jump)[:-2]]
-        
-#         if cuts:
-#             for cut in cuts:
-#                 volumes.append(volume[cut[0]:cut[1]])
-#                 seg_volumes.append(seg_volume[cut[0]:cut[1]])
+        # volumesとseg_volumesを保存する
+        for v in range(len(volumes)):
+            np.save(f"{SAVE_FOLDER}/{patient}_{study}_vol{v}.npy", volumes[v])
+            np.save(f"{SAVE_FOLDER}/{patient}_{study}_vol{v}_mask.npy", seg_volumes[v])
 
-#             volumes, seg_volumes = np.stack(volumes), np.stack(seg_volumes)
-#         else:
-#             volumes, seg_volumes = np.zeros((1, seq, sz, sz), dtype=np.uint8), np.zeros((1, seq, sz, sz), dtype=np.uint8)
-#             volumes[0, :len(volume)] = volume
-#             seg_volumes[0, :len(seg_volume)] = seg_volume
-        
-#         for v in range(len(volumes)):
-#             np.save(f"{SAVE_FOLDER}/{patient}_{study}_vol{v}.npy", volumes[v])
-#             np.save(f"{SAVE_FOLDER}/{patient}_{study}_vol{v}_mask.npy", seg_volumes[v])
-    
-    # break
-
-
-#UTILS
+# UTILS
 
 def glob_sorted(path):
     return sorted(glob(path), key=lambda x: int(x.split('/')[-1].split('.')[0]))
