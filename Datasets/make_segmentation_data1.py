@@ -231,7 +231,9 @@ print("MAKING TOTAL-SEGMENTOR DATA")
 # データセットのメタデータのことと思われる
 os.makedirs(PATHS.TOTAL_SEGMENTOR_FOLDER, exist_ok=True)
 meta = pd.read_csv(f'{PATHS.TOTAL_SEGMENTOR_FOLDER}/meta.csv', delimiter=';')
+# メタデータのstudy_typeが'abdomen'である場合に1、その他は0とした'abdomen'を追加する
 meta['abdomen'] = meta.study_type.apply(lambda x: 1 if 'abdomen' in x else 0)
+# 'abdomen'==1のものだけ取得する
 meta = meta[meta['abdomen']==1].reset_index(drop=True)
 
 SAVE_FOLDER = PATHS.TOTAL_SEGMENTOR_SAVE_FOLDER
@@ -244,7 +246,7 @@ sz = 128
 for study in tqdm(meta.image_id):
     
     try:
-        
+        # CT画像とSegmentationデータを逆順でndarrayとして取得する
         volume = load_total_volume(f'{PATHS.TOTAL_SEGMENTOR_FOLDER}/{study}/ct.nii.gz')
         seg_volume_1 = load_total_segmentation_volume(f'{PATHS.TOTAL_SEGMENTOR_FOLDER}/{study}/segmentations/liver.nii.gz')
         seg_volume_2 = load_total_segmentation_volume(f'{PATHS.TOTAL_SEGMENTOR_FOLDER}/{study}/segmentations/spleen.nii.gz')
@@ -258,8 +260,15 @@ for study in tqdm(meta.image_id):
     
         continue
     
+    # colon, duodenum, small_bowelを加算し、[0, 1]にclippingする
     seg_volume_5 = np.clip(seg_volume_5_1+seg_volume_5_2+seg_volume_5_3, 0, 1)
     
+    # それぞれの臓器に対応したラベルを付与する
+    # 1: liver
+    # 2: spleen
+    # 3: kidney_left
+    # 4: kidney_right
+    # 5: colon, duodenum, bowel
     seg_volume = np.zeros_like(seg_volume_1)
     seg_volume[seg_volume_1==1] = 1
     seg_volume[seg_volume_2==1] = 2
@@ -267,21 +276,27 @@ for study in tqdm(meta.image_id):
     seg_volume[seg_volume_4==1] = 4
     seg_volume[seg_volume_5==1] = 5
     
+    # 正規化
     volume = volume + abs(volume.min())
     volume = volume / volume.max()
-
+    # [0, 255]の範囲に変換
     volume = (volume * 255).astype(np.uint8)
 
+    # Segmentationデータはnp.uint8に型変換
     seg_volume = seg_volume.astype(np.uint8)
 
+    # 1つ飛ばしで取得する
     volume = volume[np.arange(0, volume.shape[0], 2)]
-
+    # (128, 128)にリサイズ
     volume = np.stack([cv2.resize(x, (sz, sz)) for x in volume])
 
+    # Segmentationデータも1つ飛ばしで取得する
     seg_volume = seg_volume[np.arange(0, seg_volume.shape[0], 2)].copy()
-
+    # Segmentationデータもリサイズするが、そのときの補間はcv2.INTER_NEAREST_EXACTを
+    # 用いる（これによって元のピクセル値を変えることなく補間できる）
     seg_volume = np.stack([cv2.resize(x, (sz, sz), interpolation=cv2.INTER_NEAREST_EXACT) for x in seg_volume])
 
+    # 以下、上で行った処理と同じ
     volumes, seg_volumes = [], []
     cuts = [(x, x+seq) for x in np.arange(0, volume.shape[0], jump)[:-2]]
 
