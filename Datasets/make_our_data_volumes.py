@@ -99,17 +99,27 @@ def get_volume_data(data, step=96, stride=1, stride_cutoff=200):
     volumes = []
     
     for gri, grd in tqdm(data.groupby('study')):
+        
+        # 同じStudyに属するデータがstride_cutoffより多いとき、strideの分だけ
+        # 飛ばしてデータを取得する
         if len(grd)>stride_cutoff:
             grd = grd[::stride]
         
         take_last = False
+        
+        # 同じStudyに属するデータ数がstepの倍数でないとき、take_lastをTrueにする
         if not str(len(grd)/step).endswith('.0'):
             take_last = True
         
         started = False
+        # 同じStudyに属するデータをstepで割った商が1以上のとき、以下の処理を繰り返す
+        # len(grd)//stepが0となる場合、started=Falseのままとなる
         for i in range(len(grd)//step):
+            
+            # 同じStudyに属するデータに対し、stepの枚数だけスライス
             rows = grd[i*step:(i+1)*step]
             
+            # rowsがstepとぴったり同じ数でなければ、重複を許して1/stepずつスライス
             if len(rows)!=step:
                 rows = pd.DataFrame([rows.iloc[int(x*len(rows))] for x in np.arange(0, 1, 1/step)])
             
@@ -117,33 +127,34 @@ def get_volume_data(data, step=96, stride=1, stride_cutoff=200):
             
             started = True
         
+        # 同じStudyに属するデータをstepで割った商が0の場合、
+        # 重複を許して1/stepずつスライス
         if not started:
             rows = grd
             rows = pd.DataFrame([rows.iloc[int(x*len(rows))] for x in np.arange(0, 1, 1/step)])
             volumes.append(rows)
-            
+        
+        # take_lastがTrueの場合、最後のstep分を取得
         if take_last:
             rows = grd[-step:]
+            # step分取得したときに不足がないとき、volumesに加える
             if len(rows)==step:
                 volumes.append(rows)
-
-        #break
-
+                
     return volumes
 
 
 study_level = pd.read_csv(f'{PATHS.BASE_PATH}/train.csv')
 
-study_level
-
 data = pd.read_csv(f'{PATHS.INFO_DATA_SAVE}')#[:4752]
-data
 
 OUTPUT_FOLDER = f'{PATHS.OURDATA_VOL_SAVE_PATH}'
 os.makedirs(f"{OUTPUT_FOLDER}/", exist_ok=1)
 
+# 100行ずつスライスしたデータ群のリストを取得
 volume_data = get_volume_data(data, step=100, stride=2, stride_cutoff=400)
 
+# データ群のリストのインデックスをもとに.dcmファイルを読み込み、np.saveを行う関数
 def process(i):
     rows = volume_data[i]
     patient = rows.iloc[0].patient
@@ -154,17 +165,20 @@ def process(i):
     files = np.array([f"{PATHS.BASE_PATH}/train_images/{row.patient}/{row.study}/{row.instance}.dcm" for i, row in rows.iterrows()])
     
     vol = load_volume(files)
-    
     vol = (vol * 255).astype(np.uint8)
     
     np.save(f"{OUTPUT_FOLDER}/{patient}_{study}_{start}_{end}.npy", vol)
     
     return None
-    #break
 
+# 以下、process関数をmultiprocessingで処理する
 import multiprocessing as mp
+
 start = 0
+
 with mp.Pool(processes=8) as pool:
+    
+    # スライスしたデータの個数を取得
     idxs = list(range(start, len(volume_data)))
     imap = pool.imap(process, idxs)
     _ = list(tqdm(imap, total=len(volume_data)-start))
