@@ -35,8 +35,8 @@ def __dataset__to_numpy_image(self, index=0):
     outarr = np.empty(shape, dtype=dtype)
     self.copyFrameData(index, outarr)
     return outarr
-dicomsdl._dicomsdl.DataSet.to_numpy_image = __dataset__to_numpy_image
 
+dicomsdl._dicomsdl.DataSet.to_numpy_image = __dataset__to_numpy_image
 
 import sys
 sys.path.append('./Models/')
@@ -55,7 +55,7 @@ if type(CFG.model_name)!=str:
 
 models = []
 for F in [0,]:
-    # EncoderをResnet、DecoderをUnetにしたモデルを用いてSegmentationを行う
+    # Segmentationを行うモデル群
     model = convert_3d(Model())
     state_dict = torch.load(f'{PATHS.SEGMENTATION_MODEL_SAVE}/resnet18d_v1/{F}.pth')
     model.load_state_dict(state_dict)
@@ -67,7 +67,6 @@ for F in [0,]:
 with torch.no_grad():
     outs = model(torch.zeros((2, 32, 128, 128)).cuda())
 _ = [print(o.shape) for o in outs]
-
 
 # Run Length Encodingを行うための関数
 def rle_encode(img):
@@ -134,8 +133,10 @@ def load_volume(dcms):
         
         dcm = dicomsdl.open(dcm_path)
         
+        # Windowing
         image = get_windowed_image(dcm)
         
+        # Normalizing
         if np.min(image)<0:
             image = image + np.abs(np.min(image))
         
@@ -145,7 +146,7 @@ def load_volume(dcms):
         
     return np.stack(volume)
 
-# Volumeにリサイズ、32枚ごとにスライス、torch.Tensor化を行う関数
+# Volumeに、リサイズ、32枚ごとのスライス、torch.Tensor化を行う関数
 def process_volume(volume):
     volume = np.stack([cv2.resize(x, (128, 128)) for x in volume])
     
@@ -183,17 +184,23 @@ def predict_segmentation(volumes, model):
     return outputs
 #'''
 
-# Segmentationを行い、平均0.5以上のもののMaskを作る関数
+# Segmentationを行い、スコアが0.5以上のピクセルをMaskする関数
 def predict_segmentation(volumes, models):
+    
     final_outputs = []
+    
     for model in models:
+    
         with torch.no_grad():
+    
             with torch.cuda.amp.autocast(enabled=True):
+    
                 outputs = model(volumes.cuda())
                 outputs = outputs.sigmoid().detach().cpu().numpy()
                 #outputs = (outputs>0.5).astype(np.float32)
                 final_outputs.append(outputs)
     
+    # Segmentation Modelsの出力結果の平均値をとり、Maskを作成する
     final_outputs = np.stack(final_outputs).mean(0)
     final_outputs = (final_outputs>0.5).astype(np.float32)
     
@@ -202,24 +209,29 @@ def predict_segmentation(volumes, models):
 # patient単位の全臓器の健康状態を読み込む
 data = pd.read_csv(f'{PATHS.BASE_PATH}/train.csv')#[:10]
 
-# 画像一枚単位の[Active Extravasation|Bowel]情報を読み込む
+# CT画像一枚単位の[Active Extravasation|Bowel]情報を読み込む
 image_level = pd.read_csv(f'{PATHS.BASE_PATH}/image_level_labels.csv')
 image_level_extravasation = image_level[image_level.injury_name=='Active_Extravasation']
 image_level_bowel = image_level[image_level.injury_name=='Bowel']
 
-
-DAT = {'patient': [], 'study': [], 'instance': [], 'extravasation': [], 'bowel': [], 'liver_rle': [], 'right_kidney_rle': [], 'left_kidney_rle': [], 'spleen_rle': [], 'bowel_rle': []}
+DAT = {
+    'patient': [], 'study': [], 'instance': [],
+    'extravasation': [], 'bowel': [],
+    'liver_rle': [], 'right_kidney_rle': [], 'left_kidney_rle': [],
+    'spleen_rle': [], 'bowel_rle': []
+}
 
 for patient in tqdm(data.patient_id):
     
     # studyレベルのディレクトリのリストを取得する
     studies = os.listdir(f'{PATHS.BASE_PATH}/train_images/{patient}/')
     
-    # patient/studyディレクトリ内の.dcmファイルのリストを取得し、並び替えする
     for study in studies:
+        
+        # patient/studyディレクトリ内の.dcmファイルのリストを取得し、並び替えする
         dcms = glob_sorted(f'{PATHS.BASE_PATH}/train_images/{patient}/{study}/*.dcm')
         
-        # ExtravasationもしくはBowelを表すinstance_numberをリスト化
+        # ExtravasationもしくはBowelのラベルを持つinstance_numberをリスト化
         extravasation_instances = image_level_extravasation[image_level_extravasation.series_id==int(study)].instance_number.values
         bowel_instances = image_level_bowel[image_level_bowel.series_id==int(study)].instance_number.values
         
@@ -237,12 +249,13 @@ for patient in tqdm(data.patient_id):
             
             instance = int(dcm.split('/')[-1].split('.')[0])
             
-            # patient, study, .dcmファイルのstemを記録
+            # patient, study, .dcmファイルのstemの三つを記録
             DAT['patient'].append(patient)
             DAT['study'].append(study)
             DAT['instance'].append(instance)
             
-            # image_level_labels.csvより、extravasationとbowelのラベルを記録
+            # extravasationまたはbowelのラベルがついていれば「1」とするフラグ変数を
+            # 定義する
             extravasation_label, bowel_label = 0, 0
             if instance in extravasation_instances: extravasation_label = 1
             if instance in bowel_instances: bowel_label = 1
@@ -258,25 +271,34 @@ for patient in tqdm(data.patient_id):
                           4: 'bowel'}
             
             for idx in idx_to_key:
+                
+                # Segmentation ModelのOutput(5channels)に対し、idxで参照して
+                # Run Length Encodingする
                 rle = rle_encode(seg[idx])
                 key = idx_to_key[idx]
                 
+                # Encodingしたものをそのままdictに入力
                 DAT[key+'_rle'].append(rle)
             
-# DATをpd.DataFrameに変換
+# DATをFINAL_DAT(pd.DataFrame)に変換
 FINAL_DAT = pd.DataFrame(DAT)
 
-# Run Length Encoding済みのSegmentationデータに対し、そのPixel数を記録する
+# Run Length Encoding済みのSegmentationデータに対し、
+# 「1」となっているPixel数を合計して'xxx_size'として保存する
 for col in FINAL_DAT.columns[-5:]:
+    
     rles = FINAL_DAT[col].values
     pixels = []
+    
     for rle in tqdm(rles):
+    
         ps = np.sum([int(x) for x in rle.split(' ')[1::2]])
         pixels.append(ps)
+    
     FINAL_DAT[col.replace('_rle', '_size')] = pixels
 
-# normalize number of pixels
-# 各臓器のPixel数をそれぞれstudyレベルで正規化し、0以上1以下に変換する
+# 各臓器のPixel数をそれぞれstudyレベルでMin-Max Scallingし、0以上1以下に変換する
+# 'xxx_size'はScallingされた値に上書きされる
 for gri, grd in tqdm(FINAL_DAT.groupby('study')):
     for col in grd.columns[-5:]:
         grd[col] = grd[col] / grd[col].max()
@@ -284,14 +306,16 @@ for gri, grd in tqdm(FINAL_DAT.groupby('study')):
     st = grd.study.values[0]
     FINAL_DAT[FINAL_DAT.study==st] = grd
 
+# ↓変数名はpatient_levelの方が適当
 study_level = pd.read_csv(f'{PATHS.BASE_PATH}/train.csv')
 
-# 各patientのany_injuryラベルの値を辞書で取得する
+# 各patientのany_injuryラベルの値をdictで記録する
 patient_to_injury = {pat: study_level[study_level.patient_id==pat].any_injury.values[0] for pat in study_level.patient_id.unique()}
 
 # 各patientの各臓器が健康であることを示すラベルを辞書で取得する
 cols = ['kidney_healthy', 'liver_healthy', 'spleen_healthy']
 
+# patientごとに3つの臓器の健康状態を表すdictをつくる
 for col in cols:
     exec(f'patient_to_{col}' + " = {pat: study_level[study_level.patient_id==pat]."+f"{col}"+".values[0] for pat in study_level.patient_id.unique()}")
 
@@ -301,10 +325,11 @@ data = FINAL_DAT
 
 cols = ['kidney_healthy', 'liver_healthy', 'spleen_healthy']
 
-# dataに、organs_healthyを追加する
+# dataに、3つの臓器の健康状態を追加する
 for col in cols:
     exec(f"data['{col}']"  + " = data.patient.apply(lambda x: " + f"patient_to_{col}[x])")
 
+# dataに、'any_injury'を追加する
 data['any_injury'] = data.patient.apply(lambda x: patient_to_injury[x])
 
 # dataに、organs_sizeを追加する
@@ -318,19 +343,22 @@ for col in cols:
 study_boxes = {}
 for gri, grd in tqdm(data.groupby('study')):
     
-    # 欠損値に0埋め
+    # 欠損値に''埋め
     grd = grd.fillna('')
     
     # Run Length Decodingを行い、StudyレベルのSegmentationデータに対し、
-    # 0より大なる値がある箇所に、その最大値をマッピングする
+    # 0より大なる値がある箇所に、ラベルをマッピングする
     add_rles = []
     cols = ['liver_rle', 'right_kidney_rle', 'left_kidney_rle', 'spleen_rle', 'bowel_rle']
+    
     for col in cols:
+    
         rle = np.stack([rle_decode(rle, (128, 128)) for rle in grd[col]]).max(0)
         add_rles.append(rle)
+    
+    # studyレベルで0より大なる値がある箇所に1でマッピングし、その箇所の位置を記録する
+    # 位置は高さと幅の最大値を1とした割合で得る
     msk = np.stack(add_rles).max(0)
-    # 0より大なる値がある箇所に1でマッピングし、その箇所の位置を記録する
-    # 位置は高さと幅の最大値を1とした割合で得られる
     ys, xs = np.where(msk)
     y1, y2, x1, x2 = np.min(ys) / 128, np.max(ys) / 128, np.min(xs) / 128, np.max(xs) / 128
     

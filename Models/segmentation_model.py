@@ -9,7 +9,7 @@ import sys
 sys.path.append('./Configs/')
 from segmentation_config import CFG
 
-# SegmentationにはEncoderにResnet、DecoderにUnetを用いたモデルを使う
+# SegmentationにはEncoderにResnet、DecoderにUnetを用いたモデルを使用している
 class Model(nn.Module):
     def __init__(self, backbone=None, segtype='unet', pretrained=False):
         super(Model, self).__init__()
@@ -30,11 +30,16 @@ class Model(nn.Module):
         decoder_channels = [256, 128, 64, 32, 16]
         if segtype == 'unet':
             self.decoder = smp.decoders.unet.decoder.UnetDecoder(
+                
+                # [1, 1, 3, 64, 64]
                 encoder_channels=encoder_channels[:n_blocks+1],
+                # [256, 128, 64, 32]
                 decoder_channels=decoder_channels[:n_blocks],
+                # 4
                 n_blocks=n_blocks,
             )
 
+        # nn.Conv2d(32, 5, ...)
         self.segmentation_head = nn.Conv2d(decoder_channels[n_blocks-1], 5, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
 
     def forward(self,x):
