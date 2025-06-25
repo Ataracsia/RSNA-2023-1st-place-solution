@@ -17,6 +17,7 @@ class Model(nn.Module):
         n_blocks = 4
         self.n_blocks = n_blocks
         
+        # CFG.model_name = 'resnet18d'
         self.encoder = timm.create_model(
             CFG.model_name,
             in_chans=3,
@@ -26,17 +27,21 @@ class Model(nn.Module):
             pretrained=pretrained
         )
         g = self.encoder(torch.rand(1, 3, 64, 64))
+        # [1] + [64, 64, 128, 256, 512] = [1, 64, 64, 128, 256, 512]
         encoder_channels = [1] + [_.shape[1] for _ in g]
         decoder_channels = [256, 128, 64, 32, 16]
+        
         if segtype == 'unet':
+        
             self.decoder = smp.decoders.unet.decoder.UnetDecoder(
                 
-                # [1, 1, 3, 64, 64]
+                # [1, 64, 64, 128, 256]
                 encoder_channels=encoder_channels[:n_blocks+1],
                 # [256, 128, 64, 32]
                 decoder_channels=decoder_channels[:n_blocks],
                 # 4
                 n_blocks=n_blocks,
+                
             )
 
         # nn.Conv2d(32, 5, ...)
@@ -44,11 +49,13 @@ class Model(nn.Module):
 
     def forward(self,x):
         
+        # 入力を3channelsにする
         x = torch.stack([x]*3, 1)
         
         global_features = [0] + self.encoder(x)[:self.n_blocks]
         seg_features = self.decoder(*global_features)
         seg_features = self.segmentation_head(seg_features)
+        
         return seg_features
     
 #from timm.models.layers.conv2d_same import Conv2dSame
@@ -155,6 +162,7 @@ def create_conv3d_pad(in_chs, out_chs, kernel_size, **kwargs):
 def convert_3d(module):
 
     module_output = module
+    
     if isinstance(module, torch.nn.BatchNorm2d):
         module_output = torch.nn.BatchNorm3d(
             module.num_features,

@@ -87,6 +87,7 @@ def load_volume(dcms):
 def load_segmentation_volume(path):
     volume = nib.load(path).get_fdata()
     
+    # .niiはy軸とz軸で反転しているため、逆順で取得する
     volume = volume[:, ::-1, ::-1].transpose(2, 1, 0)
     
     return volume
@@ -117,8 +118,8 @@ patient_to_studies = {}
 for pat in study_level.patient_id:
     patient_to_studies[pat] = os.listdir(f"{PATHS.BASE_PATH}/train_images/{pat}/")
 
-# train.csvに存在するpatient_idのうち、segmentationsに存在するStudyに1を、その他に
-# 0を持つ属性を追加
+# train.csvに存在するpatient_idのうち、segmentationsに存在するStudyに1を、
+# 存在しない場合に0を持つフラグ変数を追加
 study_level['seg_study'] = study_level.patient_id.apply(lambda x: max([1 if y in seg_studies else 0 for y in patient_to_studies[x]]))
 # train.csvに存在するpatient_idのうち、.dcmファイルが存在する各Studyをリストで取得
 study_level['seg_studies'] = study_level.patient_id.apply(lambda x: [y for y in patient_to_studies[x]])
@@ -136,10 +137,11 @@ seq = 32
 sz = 128
 
 # ↓は完了したのでコメントアウトしてもよい
-# 
 for i, row in tqdm(seg_study_level.iterrows()):
 
+    # patient_id
     patient = row.patient_id
+    # [study1, study2, ...]
     studies = row.seg_studies
 
     for study in studies:
@@ -158,13 +160,12 @@ for i, row in tqdm(seg_study_level.iterrows()):
             
         # CTのndarrayを1つ飛ばしで取得する
         volume = volume[np.arange(0, volume.shape[0], 2)]
-
         # リサイズ
         volume = np.stack([cv2.resize(x, (sz, sz)) for x in volume])
 
         # Segmentationデータにも同じことを行う
         seg_volume = seg_volume[np.arange(0, seg_volume.shape[0], 2)].copy()
-
+        # リサイズ
         seg_volume = np.stack([cv2.resize(x, (sz, sz), interpolation=cv2.INTER_NEAREST_EXACT) for x in seg_volume])
         
         # volumeとseg_volumeを32枚組にするために(x, x+32)というタプルのリストを作る
@@ -174,12 +175,17 @@ for i, row in tqdm(seg_study_level.iterrows()):
         cuts = [(x, x+seq) for x in np.arange(0, volume.shape[0], jump)[:-2]]
         
         if cuts:
+            
+            # 32枚1組としてstackする
             for cut in cuts:
+                
                 volumes.append(volume[cut[0]:cut[1]])
                 seg_volumes.append(seg_volume[cut[0]:cut[1]])
 
             volumes, seg_volumes = np.stack(volumes), np.stack(seg_volumes)
+            
         else:
+            
             volumes, seg_volumes = np.zeros((1, seq, sz, sz), dtype=np.uint8), np.zeros((1, seq, sz, sz), dtype=np.uint8)
             volumes[0, :len(volume)] = volume
             seg_volumes[0, :len(seg_volume)] = seg_volume
@@ -190,7 +196,6 @@ for i, row in tqdm(seg_study_level.iterrows()):
             np.save(f"{SAVE_FOLDER}/{patient}_{study}_vol{v}_mask.npy", seg_volumes[v])
 
 # UTILS
-
 def glob_sorted(path):
     return sorted(glob(path), key=lambda x: int(x.split('/')[-1].split('.')[0]))
 
